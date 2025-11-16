@@ -1,3 +1,22 @@
+import os
+import io
+import re
+from PIL import Image, ImageDraw, ImageFont
+
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    CallbackContext,
+    CallbackQueryHandler
+)
+
 # =====================================
 # KONFIGURASI DASAR
 # =====================================
@@ -5,39 +24,35 @@
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # ambil dari environment variable
 
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN tidak ditemukan. Set env BOT_TOKEN di Render dulu.")
+    raise ValueError("❌ BOT_TOKEN tidak ditemukan. Set env BOT_TOKEN di Render!")
 
-# Cek format token (biar ga salah ketik / ada spasi)
+BOT_TOKEN = BOT_TOKEN.strip()
+
+# Validasi format token telegram (aman)
 TOKEN_PATTERN = re.compile(r"^\d+:[A-Za-z0-9_-]{30,}$")
-clean_token = BOT_TOKEN.strip()
+if not TOKEN_PATTERN.match(BOT_TOKEN):
+    raise ValueError("❌ Format BOT_TOKEN salah. Cek lagi token di Render.")
 
-if not TOKEN_PATTERN.match(clean_token):
-    raise ValueError(f"Format BOT_TOKEN tidak valid. Cek lagi di Render. (len={len(clean_token)})")
+print("BOT_TOKEN OK | len =", len(BOT_TOKEN))
 
-BOT_TOKEN = clean_token  # pakai yang sudah di-strip
-
-# Debug tipis (aman, cuma nunjukkin panjang dan 5 char awal)
-print("BOT_TOKEN OK | len =", len(BOT_TOKEN), "| head =", BOT_TOKEN[:5])
-
-# =====================================
-# BASE_DIR ADA DI SINI 😎
-# =====================================
+# BASE DIR WAJIB ADA
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TEMPLATE_UK = os.path.join(BASE_DIR, "template_uk.png")
 TEMPLATE_INDIA = os.path.join(BASE_DIR, "template_india.png")
+FONT_PATH = os.path.join(BASE_DIR, "arialbd.ttf")
 
-# UK text settings
+# UK
 TEXT_X_UK = 240
 TEXT_Y_UK = 320
 FONT_SIZE_UK = 46
 
-# INDIA text settings (center)
+# INDIA
 FONT_SIZE_INDIA = 42
 TEXT_Y_INDIA = 675
 TEXT_COLOR_INDIA = (0, 0, 0)
 
-FONT_PATH = os.path.join(BASE_DIR, "arialbd.ttf")
+
 
 # =====================================
 # HELPER
@@ -56,7 +71,6 @@ def generate_card(name: str, template_path: str):
 
     text = name.strip().upper()
 
-    # Load fonts
     try:
         font_uk = ImageFont.truetype(FONT_PATH, FONT_SIZE_UK)
         font_india = ImageFont.truetype(FONT_PATH, FONT_SIZE_INDIA)
@@ -64,36 +78,26 @@ def generate_card(name: str, template_path: str):
         font_uk = ImageFont.load_default()
         font_india = ImageFont.load_default()
 
-    # ========================
-    # TEMPLATE UK
-    # ========================
-    if "uk" in template_path.lower():
+    if "uk" in template_path.lower():  # UK MODE
         bbox = draw.textbbox((0, 0), text, font=font_uk)
         h = bbox[3] - bbox[1]
         x = TEXT_X_UK
         y = TEXT_Y_UK - h // 2
-
         draw.text((x, y), text, font=font_uk, fill=(28, 26, 126))
 
-    # ========================
-    # TEMPLATE INDIA (CENTER)
-    # ========================
-    else:
+    else:  # INDIA MODE
         bbox = draw.textbbox((0, 0), text, font=font_india)
         w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-
         x = (img.width // 2) - (w // 2)
         y = TEXT_Y_INDIA
-
         draw.text((x, y), text, font=font_india, fill=TEXT_COLOR_INDIA)
 
-    # Save output
     output = io.BytesIO()
     output.name = safe_filename(text)
     img.save(output, "PNG")
     output.seek(0)
     return output
+
 
 
 # =====================================
@@ -103,80 +107,50 @@ def generate_card(name: str, template_path: str):
 def start(update: Update, context: CallbackContext):
     welcome_text = (
         "👋 **Selamat datang di VanzShop ID Card Bot!**\n\n"
-        "Bot ini membantu kamu membuat **ID Card otomatis**, cepat, rapi, dan gratis.\n\n"
-        "📌 *Template yang tersedia:*\n"
-        "• 🇬🇧 Student Card UK (LSE)\n"
-        "• 🇮🇳 Student Card India\n"
-        "• 🧾 Batch Generate (hingga 10 nama sekaligus)\n\n"
-        "💬 **Dibuat oleh:** *VanzShop.id*\n"
-        "👤 **Owner:** @VanzzSkyyID\n"
-        "🔧 Butuh bot custom? Hubungi owner.\n\n"
+        "Bikin ID Card otomatis dengan cepat.\n\n"
         "Gunakan:\n"
         "• `/card` → Buat 1 kartu\n"
-        "• `/batch` → Buat banyak kartu\n"
+        "• `/batch` → Buat banyak kartu"
     )
     update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 
-# ================= SINGLE MODE ================
 def card(update: Update, context: CallbackContext):
-    keyboard = [
-        [
-            InlineKeyboardButton("🇬🇧 Card UK", callback_data="single_uk"),
-            InlineKeyboardButton("🇮🇳 Card INDIA", callback_data="single_india")
-        ]
-    ]
+    keyboard = [[
+        InlineKeyboardButton("🇬🇧 UK", callback_data="single_uk"),
+        InlineKeyboardButton("🇮🇳 India", callback_data="single_india"),
+    ]]
     update.message.reply_text("Pilih template kartu:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# ================= BATCH MODE ================
 def batch(update: Update, context: CallbackContext):
-    keyboard = [
-        [
-            InlineKeyboardButton("🇬🇧 Batch UK", callback_data="batch_uk"),
-            InlineKeyboardButton("🇮🇳 Batch INDIA", callback_data="batch_india")
-        ]
-    ]
+    keyboard = [[
+        InlineKeyboardButton("🇬🇧 UK Batch", callback_data="batch_uk"),
+        InlineKeyboardButton("🇮🇳 India Batch", callback_data="batch_india"),
+    ]]
     update.message.reply_text("Pilih template batch:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-# =================================================
-# HANDLE TOMBOL INLINE
-# =================================================
-
 def button_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
-    query.answer()
+    q = update.callback_query
+    q.answer()
+    data = q.data
 
-    if data == "single_uk":
+    if data.startswith("single"):
         context.user_data["mode"] = "single"
-        context.user_data["template"] = TEMPLATE_UK
-        query.edit_message_text("Kirim 1 nama untuk kartu 🇬🇧 UK:")
-        return
-
-    if data == "single_india":
-        context.user_data["mode"] = "single"
-        context.user_data["template"] = TEMPLATE_INDIA
-        query.edit_message_text("Kirim 1 nama untuk kartu 🇮🇳 India:")
-        return
-
-    if data == "batch_uk":
+    else:
         context.user_data["mode"] = "batch"
+
+    if "uk" in data:
         context.user_data["template"] = TEMPLATE_UK
-        query.edit_message_text("Kirim daftar nama (max 10), 1 per baris:")
-        return
-
-    if data == "batch_india":
-        context.user_data["mode"] = "batch"
+    else:
         context.user_data["template"] = TEMPLATE_INDIA
-        query.edit_message_text("Kirim daftar nama (max 10), 1 per baris:")
-        return
 
+    if context.user_data["mode"] == "single":
+        q.edit_message_text("Kirim 1 nama untuk dibuatkan kartu.")
+    else:
+        q.edit_message_text("Kirim daftar nama (max 10), 1 baris 1 nama.")
 
-# =====================================
-# HANDLE INPUT USER
-# =====================================
 
 def handle_text(update: Update, context: CallbackContext):
     mode = context.user_data.get("mode")
@@ -184,39 +158,23 @@ def handle_text(update: Update, context: CallbackContext):
 
     if mode == "single":
         update.message.reply_text("⏳ Membuat kartu...")
-        template = context.user_data["template"]
-
-        img = generate_card(msg, template)
-
-        update.message.reply_document(
-            document=img,
-            caption=f"🎉 Kartu selesai dibuat untuk *{msg.upper()}*",
-            parse_mode="Markdown"
-        )
-
+        img = generate_card(msg, context.user_data["template"])
+        update.message.reply_document(img, caption=f"Done: {msg.upper()}")
         context.user_data["mode"] = None
         return
 
     if mode == "batch":
-        names = [n.strip() for n in msg.splitlines() if n.strip()]
-        names = names[:10]
-        template = context.user_data["template"]
-
+        names = [n.strip() for n in msg.splitlines()][:10]
         update.message.reply_text(f"⏳ Membuat {len(names)} kartu...")
-
         for name in names:
-            img = generate_card(name, template)
-            update.message.reply_document(
-                document=img,
-                caption=f"✨ {name.upper()}",
-                parse_mode="Markdown"
-            )
-
+            img = generate_card(name, context.user_data["template"])
+            update.message.reply_document(img, caption=name.upper())
         update.message.reply_text("🎉 Batch selesai!")
         context.user_data["mode"] = None
         return
 
     update.message.reply_text("Gunakan /card atau /batch untuk mulai.")
+
 
 
 # =====================================
@@ -233,12 +191,10 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
 
-    print("🤖 Bot ID Card berjalan di CMD gratis...")
+    print("BOT ONLINE 🚀")
     updater.start_polling()
     updater.idle()
 
 
 if __name__ == "__main__":
     main()
-
-
