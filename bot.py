@@ -1,22 +1,3 @@
-import os
-import io
-import re
-from PIL import Image, ImageDraw, ImageFont
-
-from telegram import (
-    Update,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    MessageHandler,
-    Filters,
-    CallbackContext,
-    CallbackQueryHandler
-)
-
 # =====================================
 # KONFIGURASI DASAR
 # =====================================
@@ -26,6 +7,21 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")  # ambil dari environment variable
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN tidak ditemukan. Set env BOT_TOKEN di Render dulu.")
 
+# Cek format token (biar ga salah ketik / ada spasi)
+TOKEN_PATTERN = re.compile(r"^\d+:[A-Za-z0-9_-]{30,}$")
+clean_token = BOT_TOKEN.strip()
+
+if not TOKEN_PATTERN.match(clean_token):
+    raise ValueError(f"Format BOT_TOKEN tidak valid. Cek lagi di Render. (len={len(clean_token)})")
+
+BOT_TOKEN = clean_token  # pakai yang sudah di-strip
+
+# Debug tipis (aman, cuma nunjukkin panjang dan 5 char awal)
+print("BOT_TOKEN OK | len =", len(BOT_TOKEN), "| head =", BOT_TOKEN[:5])
+
+# =====================================
+# BASE_DIR ADA DI SINI 😎
+# =====================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TEMPLATE_UK = os.path.join(BASE_DIR, "template_uk.png")
@@ -38,13 +34,10 @@ FONT_SIZE_UK = 46
 
 # INDIA text settings (center)
 FONT_SIZE_INDIA = 42
-TEXT_Y_INDIA = 675   # Posisi tepat di bawah foto
+TEXT_Y_INDIA = 675
 TEXT_COLOR_INDIA = (0, 0, 0)
 
-# Font path
 FONT_PATH = os.path.join(BASE_DIR, "arialbd.ttf")
-
-
 
 # =====================================
 # HELPER
@@ -247,4 +240,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
