@@ -21,7 +21,12 @@ from telegram.ext import (
 # KONFIGURASI DASAR
 # =====================================
 
-BOT_TOKEN = os.getenv("8394040194:AAFGCRKUHGY80A9Kq5Kyr-DFuuU-kAPYJHw")
+# AMBIL TOKEN DARI ENV: BOT_TOKEN
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    # Supaya kalau di Render / env belum di-set, langsung ketahuan di log
+    raise RuntimeError("Environment variable BOT_TOKEN belum diset.")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -63,7 +68,7 @@ def generate_card(name: str, template_path: str):
     try:
         font_uk = ImageFont.truetype(FONT_PATH, FONT_SIZE_UK)
         font_india = ImageFont.truetype(FONT_PATH, FONT_SIZE_INDIA)
-    except:
+    except Exception:
         font_uk = ImageFont.load_default()
         font_india = ImageFont.load_default()
 
@@ -84,7 +89,6 @@ def generate_card(name: str, template_path: str):
     else:
         bbox = draw.textbbox((0, 0), text, font=font_india)
         w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
 
         x = (img.width // 2) - (w // 2)
         y = TEXT_Y_INDIA
@@ -236,7 +240,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_text))
 
-    print("🤖 Bot ID Card berjalan di CMD gratis...")
+    print("🤖 Bot ID Card berjalan...")
     updater.start_polling()
     updater.idle()
 
