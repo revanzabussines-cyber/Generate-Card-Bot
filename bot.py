@@ -21,37 +21,32 @@ from telegram.ext import (
 # KONFIGURASI DASAR
 # =====================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # ambil dari environment variable
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN tidak ditemukan. Set env BOT_TOKEN di Render / Railway!")
 
 BOT_TOKEN = BOT_TOKEN.strip()
 
-# Validasi format token telegram (aman)
 TOKEN_PATTERN = re.compile(r"^\d+:[A-Za-z0-9_-]{30,}$")
 if not TOKEN_PATTERN.match(BOT_TOKEN):
     raise ValueError("❌ Format BOT_TOKEN salah. Cek lagi token di dashboard.")
 
 print("BOT_TOKEN OK | len =", len(BOT_TOKEN))
 
-# BASE DIR
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TEMPLATE_UK = os.path.join(BASE_DIR, "template_uk.png")
 TEMPLATE_INDIA = os.path.join(BASE_DIR, "template_india.png")
 
-# FONT SEKARANG PAKAI ARIAL.TTF
 FONT_PATH = os.path.join(BASE_DIR, "arial.ttf")
 
-# LINK CHANNEL & GROUP
 CHANNEL_URL = "https://t.me/VanzDisscusion"
 GROUP_URL = "https://t.me/VANZSHOPGROUP"
 
-# CONFIG POSISI TEKS
-# UK
+# CONFIG POSISI TEKS UK
 TEXT_X_UK = 240
-TEXT_Y_UK = 320
+TEXT_Y_UK = 350   # TURUN 30px dari sebelumnya
 FONT_SIZE_UK = 40
 
 # INDIA
@@ -84,13 +79,19 @@ def generate_card(name: str, template_path: str) -> io.BytesIO:
         font_uk = ImageFont.load_default()
         font_india = ImageFont.load_default()
 
-    if "uk" in template_path.lower():  # UK MODE
+    # ==========================
+    # TEMPLATE UK (PERBAIKAN)
+    # ==========================
+    if "uk" in template_path.lower():
+
         bbox = draw.textbbox((0, 0), text, font=font_uk)
         h = bbox[3] - bbox[1]
-        x = TEXT_X_UK
-        y = TEXT_Y_UK - h // 2
 
-        # outline tipis biar tulisan tetap nendang meski arial biasa
+        offset_y = 10   # turun dikit biar pas 👍
+
+        x = TEXT_X_UK
+        y = (TEXT_Y_UK - h // 2) + offset_y
+
         draw.text(
             (x, y),
             text,
@@ -100,7 +101,10 @@ def generate_card(name: str, template_path: str) -> io.BytesIO:
             stroke_fill=(10, 8, 80),
         )
 
-    else:  # INDIA MODE
+    # ==========================
+    # TEMPLATE INDIA
+    # ==========================
+    else:
         bbox = draw.textbbox((0, 0), text, font=font_india)
         w = bbox[2] - bbox[0]
         x = (img.width // 2) - (w // 2)
@@ -174,19 +178,16 @@ def button_handler(update: Update, context: CallbackContext):
     q.answer()
     data = q.data
 
-    # mode single / batch
     if data.startswith("single"):
         context.user_data["mode"] = "single"
     else:
         context.user_data["mode"] = "batch"
 
-    # pilih template
     if "uk" in data:
         context.user_data["template"] = TEMPLATE_UK
     else:
         context.user_data["template"] = TEMPLATE_INDIA
 
-    # instruksi lanjutan
     if context.user_data["mode"] == "single":
         q.edit_message_text("Kirim 1 nama untuk dibuatkan kartu.")
     else:
@@ -197,7 +198,6 @@ def handle_text(update: Update, context: CallbackContext):
     mode = context.user_data.get("mode")
     msg = update.message.text
 
-    # SINGLE MODE
     if mode == "single":
         update.message.reply_text("⏳ Membuat kartu...")
         img = generate_card(msg, context.user_data["template"])
@@ -205,7 +205,6 @@ def handle_text(update: Update, context: CallbackContext):
         context.user_data["mode"] = None
         return
 
-    # BATCH MODE
     if mode == "batch":
         names = [n.strip() for n in msg.splitlines() if n.strip()][:10]
         update.message.reply_text(f"⏳ Membuat {len(names)} kartu...")
@@ -216,7 +215,6 @@ def handle_text(update: Update, context: CallbackContext):
         context.user_data["mode"] = None
         return
 
-    # default kalau user chat biasa
     update.message.reply_text("Gunakan /start, /card, atau /batch untuk mulai.")
 
 
