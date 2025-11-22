@@ -1,5 +1,6 @@
 import os
 import re
+import random
 from uuid import uuid4
 
 from telegram import (
@@ -51,7 +52,7 @@ def make_safe_filename(text: str) -> str:
 def start(update: Update, context: CallbackContext):
     text = (
         "👋 Selamat datang di *VanzShop ID Card Bot!* \n\n"
-        "✨ Model baru: cukup kirim *NAMA* atau *ID* aja.\n"
+        "✨ Cukup kirim *NAMA* aja.\n"
         "• 1 baris → 1 kartu\n"
         "• Bisa banyak baris (maks 10), 1 baris 1 kartu\n\n"
         "Pilih template dulu:"
@@ -122,18 +123,17 @@ def template_chosen(update: Update, context: CallbackContext):
         return INPUT_NAMES
 
     if data == "TPL_BD":
-        # Untuk BD, pilih mode dulu: nama atau number
+        # Untuk BD, pilih mode dulu: nama saja atau nama + ID random
         context.user_data["template"] = "BD"
         keyboard = [
             [
-                InlineKeyboardButton("📝 Nama di Header", callback_data="BD_NAME"),
-                InlineKeyboardButton("🔢 Number / ID di Header", callback_data="BD_ID"),
+                InlineKeyboardButton("📝 Nama saja", callback_data="BD_NAME_ONLY"),
+                InlineKeyboardButton("🆔 Nama + ID random", callback_data="BD_NAME_ID"),
             ]
         ]
         query.message.reply_text(
             "🇧🇩 Bangladesh selected.\n\n"
-            "Pilih mau pakai *Nama* atau *Number/ID* di baris miring atas:",
-            parse_mode="Markdown",
+            "Pilih format header di garis miring atas:",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return BD_MODE
@@ -143,25 +143,23 @@ def template_chosen(update: Update, context: CallbackContext):
 
 
 # =========================
-# Mode BD (Nama / Number)
+# Mode BD (Nama saja / Nama+ID random)
 # =========================
 
 def bd_mode_chosen(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
-    if query.data == "BD_NAME":
-        context.user_data["bd_mode"] = "NAME"
-        mode_text = "Nama"
+    if query.data == "BD_NAME_ONLY":
+        context.user_data["bd_mode"] = "NAME_ONLY"
+        mode_text = "Nama saja"
     else:
-        context.user_data["bd_mode"] = "ID"
-        mode_text = "Number / ID"
+        context.user_data["bd_mode"] = "NAME_ID"
+        mode_text = "Nama + ID random"
 
     query.message.reply_text(
         f"✅ Mode BD: *{mode_text}*.\n\n"
-        "Sekarang kirim teks yang mau dipakai (1–10 baris, 1 baris 1 item).\n"
-        "• Kalau mode *Nama* → isi nama lengkap per baris.\n"
-        "• Kalau mode *Number/ID* → isi nomor / ID per baris.",
+        "Sekarang kirim *nama* yang mau dipakai (1–10 baris, 1 baris 1 nama).",
         parse_mode="Markdown",
     )
 
@@ -192,23 +190,13 @@ def handle_names(update: Update, context: CallbackContext):
         out_path = f"{tpl.lower()}_{safe_name}_{idx}.png"
 
         try:
-            # ====== Generate kartu ======
-            if tpl == "UK":
-                generate_uk_card(name, out_path)
-            elif tpl == "INDIA":
-                generate_india_card(name, out_path)
-            else:
-                generate_bangladesh_card(name, out_path)
-
-            # ====== Kirim file PNG sebagai document ======
-            with open(out_path, "rb") as f:
-                doc = InputFile(f, filename=os.path.basename(out_path))
-                update.message.reply_document(doc)
-
-            # ====== Kirim format teks biodata mirip contoh Indonesia ======
             pretty_name = name.title()
 
+            # ====== Generate kartu ======
             if tpl == "UK":
+                generate_uk_card(pretty_name, out_path)
+
+                caption = f"🇬🇧 UK • {pretty_name}"
                 info_text = (
                     "📘 *Kartu UK (LSE)*\n\n"
                     f"👤 *Nama Lengkap:* {pretty_name}\n"
@@ -219,6 +207,9 @@ def handle_names(update: Update, context: CallbackContext):
                 )
 
             elif tpl == "INDIA":
+                generate_india_card(pretty_name, out_path)
+
+                caption = f"🇮🇳 India • {pretty_name}"
                 info_text = (
                     "📗 *Kartu India (University of Mumbai)*\n\n"
                     f"👤 *Nama Lengkap:* {pretty_name}\n"
@@ -231,23 +222,36 @@ def handle_names(update: Update, context: CallbackContext):
                 )
 
             else:
-                bd_mode = context.user_data.get("bd_mode", "NAME")
-                if bd_mode == "NAME":
-                    header_label = "Nama"
-                    display_value = pretty_name
-                else:
-                    header_label = "Number/ID"
-                    display_value = name
+                bd_mode = context.user_data.get("bd_mode", "NAME_ONLY")
 
+                if bd_mode == "NAME_ONLY":
+                    header_text = pretty_name
+                    id_text = "-"
+                else:
+                    # ID random 1–9999 dengan 4 digit (0001–9999)
+                    id_num = random.randint(1, 9999)
+                    id_text = f"{id_num:04d}"
+                    header_text = f"{pretty_name} {id_text}"
+
+                # header_text yang dikirim ke template BD
+                generate_bangladesh_card(header_text, out_path)
+
+                caption = f"🇧🇩 BD • {header_text}"
                 info_text = (
                     "📙 *Bangladesh Fee Receipt (Uttara Town College)*\n\n"
-                    f"🔹 *{header_label} (header miring):* {display_value}\n"
+                    f"👤 *Nama (header):* {pretty_name}\n"
+                    f"🆔 *ID random:* {id_text}\n"
                     "🏫 *College:* Uttara Town College\n"
-                    "📍 *Alamat (di kartu):* Dhaka 1230\n"
                     "📆 *Registration Date (di kartu):* 14.10.25\n"
                     "💰 *Amount (di kartu):* 18500 BDT\n"
                 )
 
+            # ====== Kirim file PNG sebagai document ======
+            with open(out_path, "rb") as f:
+                doc = InputFile(f, filename=os.path.basename(out_path))
+                update.message.reply_document(doc, caption=caption)
+
+            # ====== Kirim format teks biodata ======
             update.message.reply_text(info_text, parse_mode="Markdown")
 
         except Exception as e:
