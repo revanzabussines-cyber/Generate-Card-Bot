@@ -69,15 +69,18 @@ def generate_uk_card(name: str, out_path: str) -> str:
 
     font = _load_first_available(ARIAL_BOLD_CANDIDATES, UK_NAME_SIZE)
 
-    # NAMA FULL KAPITAL
     text = name.upper()
     x, y = UK_NAME_POS
 
-    for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
-        draw.text((x + ox, y + oy), text, font=font, fill="black")
+    DARK_BLUE = (27, 42, 89)
+
+    # Bold 4 layer
+    for ox, oy in [(0,0), (1,0), (0,1), (1,1)]:
+        draw.text((x+ox, y+oy), text, font=font, fill=DARK_BLUE)
 
     img.save(out_path, format="PNG")
     return out_path
+
 
 
 # =========================
