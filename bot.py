@@ -18,25 +18,46 @@ from telegram.ext import (
     CallbackContext,
 )
 
-# Ambil token dari environment (Railway variable: BOT_TOKEN)
+from PIL import Image, ImageDraw, ImageFont
+
+# =========================
+# CONFIG TOKEN
+# =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Import generator dari generate_id_cards.py
-from generate_id_cards import (
-    generate_uk_card,
-    generate_india_card,
-    generate_bangladesh_card,
-)
+# =========================
+# PATH DASAR & FILE TEMPLATE / FONT
+# =========================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# =========================
-# STATE
-# =========================
-CHOOSING_TEMPLATE, INPUT_NAMES = range(2)
+TEMPLATE_UK = os.path.join(BASE_DIR, "template_uk.png")
+TEMPLATE_IN = os.path.join(BASE_DIR, "template_india.png")
+TEMPLATE_BD = os.path.join(BASE_DIR, "template_bd.png")
+
+ARIAL_BOLD_CANDIDATES = [
+    os.path.join(BASE_DIR, "Arial-bold", "Arial-bold.ttf"),
+    os.path.join(BASE_DIR, "Arial-bold", "Arial-Bold.ttf"),
+    os.path.join(BASE_DIR, "Arial-bold.ttf"),
+]
+
+VERDANA_CANDIDATES = [
+    os.path.join(BASE_DIR, "verdana.ttf"),
+]
+
+# warna biru gelap (mirip teks NAME/ID/BIRTH)
+DARK_BLUE = (27, 42, 89)
 
 
-# =========================
-# HELPER
-# =========================
+def _load_first_available(candidates, size: int) -> ImageFont.FreeTypeFont:
+    """Coba load font dari list path, kalau gagal pakai default Pillow."""
+    for path in candidates:
+        try:
+            if path and os.path.exists(path):
+                return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
 
 def make_safe_filename(text: str) -> str:
     """Bikin nama file aman: huruf/angka + underscore."""
@@ -45,15 +66,91 @@ def make_safe_filename(text: str) -> str:
 
 
 # =========================
-# /start
+# POSISI TEKS DI TEMPLATE
+# (kalo mau geser, EDIT DI SINI AJA)
 # =========================
+
+# UK
+UK_NAME_POS = (260, 260)   # posisi nama
+UK_NAME_SIZE = 42
+
+# INDIA
+INDIA_NAME_POS = (120, 950)
+INDIA_NAME_SIZE = 46
+
+# BD
+BD_HEADER_POS = (260, 230)
+BD_HEADER_SIZE = 32
+
+
+# =========================
+# FUNGSI GENERATE CARD (DALAM bot.py)
+# =========================
+
+def generate_uk_card(name: str, out_path: str) -> str:
+    """Generate kartu UK. Nama: FULL KAPITAL, warna biru gelap."""
+    img = Image.open(TEMPLATE_UK).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    font = _load_first_available(ARIAL_BOLD_CANDIDATES, UK_NAME_SIZE)
+
+    text = name.upper()
+    x, y = UK_NAME_POS
+
+    # sedikit bold (4 layer)
+    for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
+        draw.text((x + ox, y + oy), text, font=font, fill=DARK_BLUE)
+
+    img.save(out_path, format="PNG")
+    return out_path
+
+
+def generate_india_card(name: str, out_path: str) -> str:
+    """Generate kartu India. Nama: FULL KAPITAL, warna biru gelap."""
+    img = Image.open(TEMPLATE_IN).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    font = _load_first_available(ARIAL_BOLD_CANDIDATES, INDIA_NAME_SIZE)
+
+    text = name.upper()
+    x, y = INDIA_NAME_POS
+
+    for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
+        draw.text((x + ox, y + oy), text, font=font, fill=DARK_BLUE)
+
+    img.save(out_path, format="PNG")
+    return out_path
+
+
+def generate_bangladesh_card(name: str, out_path: str) -> str:
+    """Generate fee receipt Bangladesh. Nama Title Case, Verdana, warna hitam."""
+    img = Image.open(TEMPLATE_BD).convert("RGB")
+    draw = ImageDraw.Draw(img)
+
+    font = _load_first_available(VERDANA_CANDIDATES, BD_HEADER_SIZE)
+
+    clean_name = name.title()
+    x, y = BD_HEADER_POS
+
+    draw.text((x, y), clean_name, font=font, fill="black")
+
+    img.save(out_path, format="PNG")
+    return out_path
+
+
+# =========================
+# TELEGRAM BOT LOGIC
+# =========================
+
+CHOOSING_TEMPLATE, INPUT_NAMES = range(2)
+
 
 def start(update: Update, context: CallbackContext):
     text = (
         "👋 Selamat datang di *VanzShop ID Card Bot!* \n\n"
         "✨ Cukup kirim *NAMA* aja.\n"
         "• 1 baris → 1 kartu\n"
-        "• Bisa banyak baris (maks 10), 1 baris 1 kartu\n\n"
+        "• Bisa banyak baris (maks 10), 1 baris 1 nama\n\n"
         "Pilih template dulu:"
     )
 
@@ -74,10 +171,6 @@ def start(update: Update, context: CallbackContext):
     return CHOOSING_TEMPLATE
 
 
-# =========================
-# /card (sama kayak /start)
-# =========================
-
 def card_cmd(update: Update, context: CallbackContext):
     keyboard = [
         [
@@ -92,10 +185,6 @@ def card_cmd(update: Update, context: CallbackContext):
     )
     return CHOOSING_TEMPLATE
 
-
-# =========================
-# Template dipilih (inline button)
-# =========================
 
 def template_chosen(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -125,15 +214,10 @@ def template_chosen(update: Update, context: CallbackContext):
     return INPUT_NAMES
 
 
-# =========================
-# Input nama (single / batch)
-# =========================
-
 def handle_names(update: Update, context: CallbackContext):
     tpl = context.user_data.get("template", "UK")
     raw = update.message.text.strip()
 
-    # Split per baris
     names = [line.strip() for line in raw.splitlines() if line.strip()]
     if not names:
         update.message.reply_text("❌ Input kosong, kirim lagi ya (1–10 baris).")
@@ -143,21 +227,23 @@ def handle_names(update: Update, context: CallbackContext):
         names = names[:10]
         update.message.reply_text("⚠ Maksimal 10 baris. Dipakai 10 baris pertama.")
 
-    # Generate satu per satu
     for idx, name in enumerate(names, start=1):
-        pretty_name = name.title()
-        safe_name = make_safe_filename(pretty_name)
+        raw_name = name.strip()
+        upper_name = raw_name.upper()
+        title_name = raw_name.title()
+
+        safe_name = make_safe_filename(raw_name)
         out_path = f"{tpl.lower()}_{safe_name}_{idx}.png"
 
         try:
             # ====== Generate kartu ======
             if tpl == "UK":
-                generate_uk_card(pretty_name, out_path)
+                generate_uk_card(upper_name, out_path)
 
-                caption = f"🇬🇧 UK • {pretty_name}"
+                caption = f"🇬🇧 UK • {upper_name}"
                 info_text = (
                     "📘 *Kartu UK (LSE)*\n\n"
-                    f"👤 *Nama Lengkap:* {pretty_name}\n"
+                    f"👤 *Nama Lengkap:* {upper_name}\n"
                     "🏫 *Universitas:* The London School of Economics and Political Science (LSE)\n"
                     "🪪 *ID (di kartu):* 1201-0732\n"
                     "🎂 *Tanggal Lahir (di kartu):* 10/10/2005\n"
@@ -165,12 +251,12 @@ def handle_names(update: Update, context: CallbackContext):
                 )
 
             elif tpl == "INDIA":
-                generate_india_card(pretty_name, out_path)
+                generate_india_card(upper_name, out_path)
 
-                caption = f"🇮🇳 India • {pretty_name}"
+                caption = f"🇮🇳 India • {upper_name}"
                 info_text = (
                     "📗 *Kartu India (University of Mumbai)*\n\n"
-                    f"👤 *Nama Lengkap:* {pretty_name}\n"
+                    f"👤 *Nama Lengkap:* {upper_name}\n"
                     "🏫 *Universitas:* University of Mumbai\n"
                     "🪪 *ID No (di kartu):* MU23ECE001\n"
                     "📚 *Class (di kartu):* ECE\n"
@@ -180,13 +266,12 @@ def handle_names(update: Update, context: CallbackContext):
                 )
 
             else:  # BD
-                # BD cuma pakai nama (tanpa ID random), font & style diatur di generate_id_cards.py
-                generate_bangladesh_card(pretty_name, out_path)
+                generate_bangladesh_card(title_name, out_path)
 
-                caption = f"🇧🇩 Bangladesh • {pretty_name}"
+                caption = f"🇧🇩 Bangladesh • {title_name}"
                 info_text = (
                     "📙 *Bangladesh Fee Receipt (Uttara Town College)*\n\n"
-                    f"👤 *Nama (header):* {pretty_name}\n"
+                    f"👤 *Nama (header):* {title_name}\n"
                     "🏫 *College:* Uttara Town College\n"
                     "📆 *Registration Date (di kartu):* 14.10.25\n"
                     "💰 *Amount (di kartu):* 18500 BDT\n"
@@ -210,19 +295,11 @@ def handle_names(update: Update, context: CallbackContext):
     return ConversationHandler.END
 
 
-# =========================
-# /cancel
-# =========================
-
 def cancel(update: Update, context: CallbackContext):
     context.user_data.clear()
     update.message.reply_text("❌ Proses dibatalkan.")
     return ConversationHandler.END
 
-
-# =========================
-# MAIN
-# =========================
 
 def main():
     if not BOT_TOKEN:
