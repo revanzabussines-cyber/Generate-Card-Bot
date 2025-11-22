@@ -64,20 +64,15 @@ BD_HEADER_SIZE = 32
 # =========================
 
 def generate_uk_card(name: str, out_path: str) -> str:
-    """
-    Generate kartu UK — hanya pakai nama.
-    Detail lain (ID, Birth, Address) statis di template.
-    """
     img = Image.open(TEMPLATE_UK).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     font = _load_first_available(ARIAL_BOLD_CANDIDATES, UK_NAME_SIZE)
 
-    # rapihin nama
-    text = name.title()
+    # NAMA FULL KAPITAL
+    text = name.upper()
     x, y = UK_NAME_POS
 
-    # sedikit bold (4 layer)
     for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
         draw.text((x + ox, y + oy), text, font=font, fill="black")
 
@@ -90,16 +85,13 @@ def generate_uk_card(name: str, out_path: str) -> str:
 # =========================
 
 def generate_india_card(name: str, out_path: str) -> str:
-    """
-    Generate kartu India — hanya pakai nama.
-    Detail lain statis di template.
-    """
     img = Image.open(TEMPLATE_IN).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     font = _load_first_available(ARIAL_BOLD_CANDIDATES, INDIA_NAME_SIZE)
 
-    text = name.title()
+    # NAMA FULL KAPITAL
+    text = name.upper()
     x, y = INDIA_NAME_POS
 
     for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
@@ -107,6 +99,7 @@ def generate_india_card(name: str, out_path: str) -> str:
 
     img.save(out_path, format="PNG")
     return out_path
+
 
 
 # =========================
