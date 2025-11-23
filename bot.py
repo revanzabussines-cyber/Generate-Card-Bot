@@ -19,8 +19,10 @@ from telegram.ext import (
 
 from PIL import Image, ImageDraw, ImageFont
 
+# =========================
+# TIMEZONE (WIB)
+# =========================
 try:
-    # Biar waktu pakai WIB
     from zoneinfo import ZoneInfo
     WIB = ZoneInfo("Asia/Jakarta")
 
@@ -32,12 +34,15 @@ except Exception:
 
 
 # =========================
-# CONFIG TOKEN & PREMIUM
+# CONFIG TOKEN, OWNER, PREMIUM
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# user premium (unlimited generate)
-PREMIUM_USERS = {7321522905}
+# OWNER (yang boleh /addpremium)
+OWNER_ID = 7321522905
+
+# user premium (unlimited generate) - defaultnya OWNER premium juga
+PREMIUM_USERS = {OWNER_ID}
 
 # limit free
 MAX_FREE_PER_DAY = 1
@@ -97,7 +102,6 @@ def make_safe_filename(text: str) -> str:
 
 # =========================
 # POSISI TEKS DI TEMPLATE
-# (kalo mau geser, EDIT DI SINI AJA)
 # =========================
 
 # UK
@@ -108,8 +112,9 @@ UK_NAME_SIZE = 42
 INDIA_NAME_Y = 665
 INDIA_NAME_SIZE = 43
 
-# INDONESIA (center horizontal juga)
-ID_NAME_Y = 350   # atur tinggi nama di kartu Indonesia
+# INDONESIA (center horizontal, bisa geser kanan/kiri pakai offset)
+ID_NAME_Y = 350          # atur tinggi nama di kartu Indonesia
+ID_NAME_X_OFFSET = 0     # geser kanan (+), kiri (-) kalau mau
 ID_NAME_SIZE = 50
 
 # BD
@@ -168,7 +173,7 @@ def generate_india_card(name: str, out_path: str) -> str:
 
 
 def generate_indonesia_card(name: str, out_path: str) -> str:
-    """Generate kartu Indonesia. FULL KAPITAL, biru gelap, center."""
+    """Generate kartu Indonesia. FULL KAPITAL, biru gelap, center dengan offset X."""
     img = Image.open(TEMPLATE_ID).convert("RGB")
     draw = ImageDraw.Draw(img)
 
@@ -176,7 +181,8 @@ def generate_indonesia_card(name: str, out_path: str) -> str:
     text = name.upper()
 
     text_w, text_h = _measure_text(draw, text, font)
-    x = (img.width - text_w) // 2
+    # center + offset kanan/kiri
+    x = (img.width - text_w) // 2 + ID_NAME_X_OFFSET
     y = ID_NAME_Y
 
     for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
@@ -228,7 +234,9 @@ def get_lang(context: CallbackContext) -> str:
 
 def build_start_text(user, lang: str, is_premium: bool, remaining):
     name = user.first_name or "User"
-    now_str = now_wib().strftime("%d-%m-%Y %H:%M")
+    now = now_wib()
+    # Contoh: 23 Nov 2025 • 08:40 WIB
+    now_str = now.strftime("%d %b %Y • %H:%M WIB")
 
     if lang == "en":
         status_line = "🔓 *Status:* Premium user" if is_premium else "🆓 *Status:* Free user"
@@ -245,7 +253,7 @@ def build_start_text(user, lang: str, is_premium: bool, remaining):
 
         text = (
             f"👋 Hello, *{name.upper()}*!\n"
-            f"⏰ *Time:* {now_str}\n\n"
+            f"🕒 {now_str}\n\n"
             "*VanzShop ID Card Bot* will help you generate ID Cards automatically.\n\n"
             "✨ Just send the *NAME*:\n"
             "• 1 line → 1 card\n"
@@ -268,7 +276,7 @@ def build_start_text(user, lang: str, is_premium: bool, remaining):
 
         text = (
             f"👋 Halo, *{name.upper()}*!\n"
-            f"⏰ *Waktu sekarang:* {now_str}\n\n"
+            f"🕒 {now_str}\n\n"
             "*VanzShop ID Card Bot* bakal bantu kamu bikin ID Card otomatis.\n\n"
             "✨ Cukup kirim *NAMA* aja:\n"
             "• 1 baris → 1 kartu\n"
@@ -472,7 +480,7 @@ def handle_names(update: Update, context: CallbackContext):
     tpl = context.user_data.get("template")
     step = context.user_data.get("step")
 
-    # kalau bukan lagi fase input nama, cuekin aja / kasih info pendek
+    # kalau bukan lagi fase input nama, cuekin aja
     if step != "input_names" or not tpl:
         return
 
@@ -627,22 +635,69 @@ def handle_names(update: Update, context: CallbackContext):
     if not is_premium and generated > 0:
         rec["count"] += generated
 
-    # setelah selesai, balik ke menu awal
-    context.user_data["step"] = "choose_action"
+    # setelah selesai, reset state
+    # TIDAK auto kirim menu /start lagi (sesuai request)
+    context.user_data["step"] = None
     context.user_data["template"] = None
     context.user_data["mode"] = None
 
-    # opsi: kirim menu lagi biar user enak
-    is_premium = user.id in PREMIUM_USERS
-    remaining = get_remaining_quota(user.id, is_premium)
-    text = build_start_text(user, lang, is_premium, remaining)
-    keyboard = build_action_keyboard(lang)
+
+# =========================
+# /addpremium (OWNER ONLY)
+# =========================
+
+def add_premium(update: Update, context: CallbackContext):
+    user = update.effective_user
+
+    # cek permission
+    if user.id != OWNER_ID:
+        update.message.reply_text("❌ Kamu tidak punya akses untuk command ini.")
+        return
+
+    target_id = None
+    target_name = None
+
+    # 1) kalau pakai argumen: /addpremium 123456789
+    if context.args:
+        try:
+            target_id = int(context.args[0])
+            target_name = str(target_id)
+        except ValueError:
+            update.message.reply_text("❌ ID user harus berupa angka.\nContoh: `/addpremium 123456789`", parse_mode="Markdown")
+            return
+
+    # 2) kalau reply ke user: /addpremium (di-reply-in)
+    elif update.message.reply_to_message:
+        replied_user = update.message.reply_to_message.from_user
+        target_id = replied_user.id
+        target_name = replied_user.full_name
+
+    else:
+        update.message.reply_text(
+            "Cara pakai:\n"
+            "• `/addpremium 123456789`\n"
+            "• Reply pesan user lalu ketik `/addpremium`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # tambah ke set PREMIUM_USERS
+    if target_id in PREMIUM_USERS:
+        update.message.reply_text(f"ℹ️ User ini sudah ada di daftar premium.\nID: `{target_id}`", parse_mode="Markdown")
+        return
+
+    PREMIUM_USERS.add(target_id)
     update.message.reply_text(
-        text,
+        f"✅ Berhasil menambahkan *premium user*.\n"
+        f"👤 User: *{target_name}*\n"
+        f"🆔 ID: `{target_id}`",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
+
+# =========================
+# MAIN
+# =========================
 
 def main():
     if not BOT_TOKEN:
@@ -654,6 +709,7 @@ def main():
     # command
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("card", start))  # alias
+    dp.add_handler(CommandHandler("addpremium", add_premium))
 
     # inline buttons
     dp.add_handler(CallbackQueryHandler(action_buttons, pattern="^(ACT_|BTN_)"))
@@ -668,11 +724,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
