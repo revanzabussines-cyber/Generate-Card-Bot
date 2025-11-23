@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date
 
 from telegram import (
     Update,
@@ -19,26 +19,30 @@ from telegram.ext import (
 
 from PIL import Image, ImageDraw, ImageFont
 
+try:
+    # Biar waktu pakai WIB
+    from zoneinfo import ZoneInfo
+    WIB = ZoneInfo("Asia/Jakarta")
+
+    def now_wib():
+        return datetime.now(WIB)
+except Exception:
+    def now_wib():
+        return datetime.now()
+
+
 # =========================
-# CONFIG TOKEN
+# CONFIG TOKEN & PREMIUM
 # =========================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# =========================
-# PREMIUM & LIMIT FREE
-# =========================
+# user premium (unlimited generate)
+PREMIUM_USERS = {7321522905}
 
-# isi sendiri user id premium, contoh: {123456789}
-PREMIUM_USERS = (7321522905)
+# limit free
+MAX_FREE_PER_DAY = 1
+daily_usage = {}  # user_id -> {"date": "YYYY-MM-DD", "count": int}
 
-# limit free user: 1 kartu / hari (1 nama)
-DAILY_FREE_LIMIT = 1
-
-# (user_id, date_str) -> jumlah kartu yang sudah dipakai
-daily_usage = {}
-
-# user_id -> "id" / "en"
-user_lang = {}
 
 # =========================
 # PATH DASAR & FILE TEMPLATE / FONT
@@ -50,7 +54,7 @@ TEMPLATE_IN = os.path.join(BASE_DIR, "template_india.png")
 TEMPLATE_BD = os.path.join(BASE_DIR, "template_bd.png")
 TEMPLATE_ID = os.path.join(BASE_DIR, "template_id.png")  # Indonesia
 
-# UK -> Arial Bold
+# UK & ID -> Arial Bold
 ARIAL_BOLD_CANDIDATES = [
     os.path.join(BASE_DIR, "Arial-bold", "Arial-bold.ttf"),
     os.path.join(BASE_DIR, "Arial-bold", "Arial-Bold.ttf"),
@@ -70,13 +74,9 @@ VERDANA_CANDIDATES = [
     os.path.join(BASE_DIR, "verdana.ttf"),
 ]
 
-# warna biru gelap (mirip teks NAME/ID/BIRTH UK)
-DARK_BLUE = (27, 42, 89)
+# warna biru gelap baru (#1E2365)
+DARK_BLUE = (30, 35, 101)
 
-
-# =========================
-# HELPER UMUM
-# =========================
 
 def _load_first_available(candidates, size: int) -> ImageFont.FreeTypeFont:
     """Coba load font dari list path, kalau gagal pakai default Pillow."""
@@ -95,38 +95,9 @@ def make_safe_filename(text: str) -> str:
     return clean or "card"
 
 
-def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont):
-    """Hitung lebar/tinggi teks yang kompatibel dengan Pillow baru."""
-    bbox = draw.textbbox((0, 0), text, font=font)
-    w = bbox[2] - bbox[0]
-    h = bbox[3] - bbox[1]
-    return w, h
-
-
-def is_premium(user_id: int) -> bool:
-    return user_id in PREMIUM_USERS
-
-
-def get_today_str() -> str:
-    tz = timezone(timedelta(hours=7))  # WIB
-    return datetime.now(tz).strftime("%Y-%m-%d")
-
-
-def get_now_wib_str() -> str:
-    tz = timezone(timedelta(hours=7))
-    return datetime.now(tz).strftime("%d %b %Y • %H:%M WIB")
-
-
-def get_lang(user_id: int) -> str:
-    return user_lang.get(user_id, "id")  # default Indonesia
-
-
-def set_lang(user_id: int, lang: str):
-    user_lang[user_id] = lang
-
-
 # =========================
 # POSISI TEKS DI TEMPLATE
+# (kalo mau geser, EDIT DI SINI AJA)
 # =========================
 
 # UK
@@ -168,6 +139,14 @@ def generate_uk_card(name: str, out_path: str) -> str:
     return out_path
 
 
+def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont):
+    """Hitung lebar/tinggi teks yang kompatibel dengan Pillow baru."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    return w, h
+
+
 def generate_india_card(name: str, out_path: str) -> str:
     """Generate kartu India. Nama: FULL KAPITAL, warna HITAM, Arial.ttf, auto center."""
     img = Image.open(TEMPLATE_IN).convert("RGB")
@@ -176,7 +155,7 @@ def generate_india_card(name: str, out_path: str) -> str:
     font = _load_first_available(ARIAL_REGULAR_CANDIDATES, INDIA_NAME_SIZE)
     text = name.upper()
 
-    # center horizontal
+    # center horizontal pakai textbbox
     text_w, text_h = _measure_text(draw, text, font)
     x = (img.width - text_w) // 2
     y = INDIA_NAME_Y
@@ -224,31 +203,110 @@ def generate_bangladesh_card(name: str, out_path: str) -> str:
 
 
 # =========================
-# UI BUILDER
+# HELPER QUOTA & LANGUAGE
 # =========================
 
-def build_main_keyboard(lang: str) -> InlineKeyboardMarkup:
+def get_usage_record(user_id: int):
+    today = date.today().isoformat()
+    rec = daily_usage.get(user_id)
+    if not rec or rec["date"] != today:
+        rec = {"date": today, "count": 0}
+        daily_usage[user_id] = rec
+    return rec
+
+
+def get_remaining_quota(user_id: int, is_premium: bool):
+    if is_premium:
+        return None
+    rec = get_usage_record(user_id)
+    return max(0, MAX_FREE_PER_DAY - rec["count"])
+
+
+def get_lang(context: CallbackContext) -> str:
+    return context.user_data.get("lang", "id")
+
+
+def build_start_text(user, lang: str, is_premium: bool, remaining):
+    name = user.first_name or "User"
+    now_str = now_wib().strftime("%d-%m-%Y %H:%M")
+
     if lang == "en":
-        gen_label = "🎴 Generate Card"
-        batch_label = "📦 Batch Generator"
-        lang_label = "🌐 Language"
+        status_line = "🔓 *Status:* Premium user" if is_premium else "🆓 *Status:* Free user"
+        if is_premium:
+            limit_lines = (
+                "♾ *Daily limit:* Unlimited.\n"
+                "✅ You can generate as many cards as you want today."
+            )
+        else:
+            limit_lines = (
+                f"📌 *Daily limit:* {MAX_FREE_PER_DAY} card per day.\n"
+                f"🎯 *Remaining today:* {remaining} card."
+            )
+
+        text = (
+            f"👋 Hello, *{name.upper()}*!\n"
+            f"⏰ *Time:* {now_str}\n\n"
+            "*VanzShop ID Card Bot* will help you generate ID Cards automatically.\n\n"
+            "✨ Just send the *NAME*:\n"
+            "• 1 line → 1 card\n"
+            "• You can send up to 10 lines (1 line = 1 name, for premium users).\n\n"
+            f"{status_line}\n{limit_lines}\n\n"
+            "Now choose what you want to do:"
+        )
     else:
-        gen_label = "🎴 Generate Card"
-        batch_label = "📦 Batch Generator"
-        lang_label = "🌐 Language"
+        status_line = "🔓 *Status:* Premium user" if is_premium else "🆓 *Status:* Free user"
+        if is_premium:
+            limit_lines = (
+                "♾ *Batas harian:* Unlimited.\n"
+                "✅ Kamu bisa generate kartu sepuasnya hari ini."
+            )
+        else:
+            limit_lines = (
+                f"📌 *Batas harian:* {MAX_FREE_PER_DAY} kartu per hari.\n"
+                f"🎯 *Sisa jatah hari ini:* {remaining} kartu."
+            )
+
+        text = (
+            f"👋 Halo, *{name.upper()}*!\n"
+            f"⏰ *Waktu sekarang:* {now_str}\n\n"
+            "*VanzShop ID Card Bot* bakal bantu kamu bikin ID Card otomatis.\n\n"
+            "✨ Cukup kirim *NAMA* aja:\n"
+            "• 1 baris → 1 kartu\n"
+            "• Bisa kirim sampai 10 baris (1 baris 1 nama, khusus premium).\n\n"
+            f"{status_line}\n{limit_lines}\n\n"
+            "Sekarang pilih yang mau kamu lakukan:"
+        )
+
+    return text
+
+
+def build_action_keyboard(lang: str):
+    if lang == "en":
+        btn_generate = "📇 Generate card"
+        btn_batch = "📦 Batch generator"
+        btn_admin = "👑 Admin"
+        btn_lang = "🌐 Language"
+    else:
+        btn_generate = "📇 Generate card"
+        btn_batch = "📦 Generator batch"
+        btn_admin = "👑 Admin"
+        btn_lang = "🌐 Language"
 
     keyboard = [
-        [InlineKeyboardButton(gen_label, callback_data="GEN_CARD")],
-        [InlineKeyboardButton(batch_label, callback_data="GEN_BATCH")],
         [
-            InlineKeyboardButton("👑 Admin", url="https://t.me/VanzzSkyyID"),
-            InlineKeyboardButton(lang_label, callback_data="LANG_MENU"),
+            InlineKeyboardButton(btn_generate, callback_data="ACT_SINGLE"),
+            InlineKeyboardButton(btn_batch, callback_data="ACT_BATCH"),
+        ],
+        [
+            InlineKeyboardButton(btn_admin, callback_data="BTN_ADMIN"),
+            InlineKeyboardButton(btn_lang, callback_data="BTN_LANG"),
         ],
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return keyboard
 
 
-def build_template_keyboard() -> InlineKeyboardMarkup:
+def build_template_keyboard(lang: str):
+    # label negara sama aja di dua bahasa
     keyboard = [
         [
             InlineKeyboardButton("🇬🇧 UK", callback_data="TPL_UK"),
@@ -259,167 +317,114 @@ def build_template_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🇮🇩 Indonesia", callback_data="TPL_ID"),
         ],
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return keyboard
 
 
 # =========================
-# HANDLERS
+# HANDLER TELEGRAM
 # =========================
 
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    uid = user.id
-    lang = get_lang(uid)
-    name = user.first_name or user.username or "User"
+    lang = get_lang(context)
+    is_premium = user.id in PREMIUM_USERS
+    remaining = get_remaining_quota(user.id, is_premium)
 
-    today = get_today_str()
-    used = daily_usage.get((uid, today), 0)
-    premium = is_premium(uid)
-
-    if premium:
-        status_line = "👑 *Status:* Premium user"
-        limit_line = "🧾 *Batas harian:* Unlimited\n🎯 *Sisa hari ini:* ∞ kartu"
-    else:
-        remaining = max(DAILY_FREE_LIMIT - used, 0)
-        status_line = "🆓 *Status:* Free user"
-        limit_line = (
-            f"🧾 *Batas harian:* {DAILY_FREE_LIMIT} kartu\n"
-            f"🎯 *Sisa hari ini:* {remaining} kartu"
-        )
-
-    time_str = get_now_wib_str()
-
-    if lang == "en":
-        text = (
-            f"👋 Hello, *{name.upper()}*!\n"
-            f"🕒 {time_str}\n\n"
-            "*VanzShop ID Card Bot* helps you generate student ID cards automatically.\n\n"
-            "✨ Just send *NAME*:\n"
-            "• 1 line → 1 card\n"
-            "• Up to 10 lines (1 line 1 name, premium only)\n\n"
-            f"{status_line}\n{limit_line}\n\n"
-            "Upgrade to premium → @VanzzSkyyID\n\n"
-            "Choose menu below:"
-        )
-    else:
-        text = (
-            f"👋 Halo, *{name.upper()}*!\n"
-            f"🕒 {time_str}\n\n"
-            "*VanzShop ID Card Bot* bakal bantu kamu bikin ID Card otomatis.\n\n"
-            "✨ Cukup kirim *NAMA* aja:\n"
-            "• 1 baris → 1 kartu\n"
-            "• Bisa kirim sampai 10 baris (1 baris 1 nama, khusus premium)\n\n"
-            f"{status_line}\n{limit_line}\n\n"
-            "Upgrade ke premium → @VanzzSkyyID\n\n"
-            "Sekarang pilih menu di bawah:"
-        )
+    text = build_start_text(user, lang, is_premium, remaining)
+    keyboard = build_action_keyboard(lang)
 
     update.message.reply_text(
         text,
         parse_mode="Markdown",
-        reply_markup=build_main_keyboard(lang),
-    )
-
-
-def card_cmd(update: Update, context: CallbackContext):
-    """Command /card → langsung pilih template."""
-    uid = update.effective_user.id
-    lang = get_lang(uid)
-
-    if lang == "en":
-        text = "Choose card template:"
-    else:
-        text = "Pilih template kartu yang mau dibuat:"
-
-    update.message.reply_text(
-        text,
-        reply_markup=build_template_keyboard(),
-    )
-
-
-# ====== Callback tombol menu utama ======
-
-def gen_card_button(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    uid = query.from_user.id
-    lang = get_lang(uid)
-
-    if lang == "en":
-        text = "Choose card template:"
-    else:
-        text = "Pilih template kartu yang mau dibuat:"
-
-    query.message.reply_text(
-        text,
-        reply_markup=build_template_keyboard(),
-    )
-
-
-def gen_batch_button(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    uid = query.from_user.id
-    lang = get_lang(uid)
-
-    if lang == "en":
-        text = (
-            "📦 *Batch Generator*\n\n"
-            "This feature is not available yet.\n"
-            "For now, use *Generate Card*."
-        )
-    else:
-        text = (
-            "📦 *Batch Generator*\n\n"
-            "Fitur ini belum tersedia.\n"
-            "Untuk sementara pakai *Generate Card* dulu ya."
-        )
-
-    query.message.reply_text(text, parse_mode="Markdown")
-
-
-def language_menu(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-
-    keyboard = [
-        [
-            InlineKeyboardButton("🇮🇩 Bahasa Indonesia", callback_data="SET_LANG_ID"),
-            InlineKeyboardButton("🇬🇧 English", callback_data="SET_LANG_EN"),
-        ]
-    ]
-    query.message.reply_text(
-        "Pilih bahasa / Choose language:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
+    context.user_data["step"] = "choose_action"
+    context.user_data["template"] = None
+    context.user_data["mode"] = None
 
-def set_lang_id(update: Update, context: CallbackContext):
+
+def action_buttons(update: Update, context: CallbackContext):
     query = update.callback_query
-    uid = query.from_user.id
-    set_lang(uid, "id")
-    query.answer("Bahasa diganti ke Indonesia")
-    # cuma info kecil, nggak ganggu proses card
-    query.message.reply_text("✅ Bahasa interface: Indonesia.")
+    data = query.data
+    user = query.from_user
+    lang = get_lang(context)
+    is_premium = user.id in PREMIUM_USERS
 
+    # agar notifikasi loading di HP ilang
+    query.answer()
 
-def set_lang_en(update: Update, context: CallbackContext):
-    query = update.callback_query
-    uid = query.from_user.id
-    set_lang(uid, "en")
-    query.answer("Language set to English")
-    query.message.reply_text("✅ Interface language: English.")
+    if data == "ACT_SINGLE" or data == "ACT_BATCH":
+        # ACT_BATCH sekarang diperlakukan sama, bedanya cuma teks
+        context.user_data["mode"] = "batch" if data == "ACT_BATCH" else "single"
+        context.user_data["step"] = "choose_template"
 
+        if lang == "en":
+            mode_text = "single card" if data == "ACT_SINGLE" else "batch (multi-line) mode"
+            text = (
+                f"✅ *Generate {mode_text} activated.*\n\n"
+                "Now choose the ID Card template you want to use:"
+            )
+        else:
+            mode_text = "1 kartu" if data == "ACT_SINGLE" else "batch (banyak nama)"
+            text = (
+                f"✅ *Generate {mode_text} diaktifkan.*\n\n"
+                "Sekarang pilih template ID Card yang mau dipakai:"
+            )
 
-# ====== Template dipilih ======
+        keyboard = build_template_keyboard(lang)
+        query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    elif data == "BTN_ADMIN":
+        if lang == "en":
+            text = (
+                "👑 *Admin / Owner:*\n"
+                "@VanzzSkyyID\n\n"
+                "📢 *Info Channel:* VanzINFO"
+            )
+        else:
+            text = (
+                "👑 *Admin / Owner:*\n"
+                "@VanzzSkyyID\n\n"
+                "📢 *Channel Info:* VanzINFO"
+            )
+        query.message.reply_text(text, parse_mode="Markdown")
+
+    elif data == "BTN_LANG":
+        # ganti bahasa, tapi gak ganggu step proses (kecuali di menu awal)
+        old_lang = lang
+        new_lang = "en" if old_lang == "id" else "id"
+        context.user_data["lang"] = new_lang
+        is_premium = user.id in PREMIUM_USERS
+        remaining = get_remaining_quota(user.id, is_premium)
+
+        # kalau lagi di menu utama, rebuild teks + keyboard
+        if context.user_data.get("step") == "choose_action":
+            text = build_start_text(user, new_lang, is_premium, remaining)
+            keyboard = build_action_keyboard(new_lang)
+            query.edit_message_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            # lagi di tengah flow, cukup kasih notif
+            if new_lang == "en":
+                query.message.reply_text("🌐 Language switched to *English*.", parse_mode="Markdown")
+            else:
+                query.message.reply_text("🌐 Bahasa diganti ke *Indonesia*.", parse_mode="Markdown")
+
 
 def template_chosen(update: Update, context: CallbackContext):
     query = update.callback_query
-    query.answer()
-    uid = query.from_user.id
-    lang = get_lang(uid)
+    data = query.data
+    lang = get_lang(context)
 
-    data = query.data  # TPL_UK / TPL_IN / TPL_BD / TPL_ID
+    query.answer()
 
     tpl_map = {
         "TPL_UK": "UK",
@@ -428,113 +433,119 @@ def template_chosen(update: Update, context: CallbackContext):
         "TPL_ID": "IDN",
     }
 
-    label_map = {
-        "UK": "UK",
-        "INDIA": "India",
-        "BD": "Bangladesh",
-        "IDN": "Indonesia",
-    }
-
     tpl = tpl_map.get(data)
     if not tpl:
         query.message.reply_text("Template tidak dikenal.")
         return
 
     context.user_data["template"] = tpl
+    context.user_data["step"] = "input_names"
 
-    label = label_map[tpl]
+    label = {
+        "UK": "UK (LSE)",
+        "INDIA": "India (University of Mumbai)",
+        "BD": "Bangladesh (Uttara Town College)",
+        "IDN": "Indonesia (Universitas Islam Indonesia)",
+    }[tpl]
 
     if lang == "en":
         text = (
-            f"✅ Template *{label}* selected.\n\n"
-            "Now send *NAMES* (1–10 lines, 1 line 1 name)."
+            f"✅ *Template {label} selected.*\n\n"
+            "Now send the *name(s)* you want to put on the card.\n"
+            "• 1–10 lines.\n"
+            "• 1 line = 1 card."
         )
     else:
         text = (
-            f"✅ Template *{label}* dipilih.\n\n"
-            "Sekarang kirim *nama* (1–10 baris, 1 baris 1 nama)."
+            f"✅ *Template {label} dipilih.*\n\n"
+            "Sekarang kirim *nama* yang mau dibuat kartunya.\n"
+            "• 1–10 baris.\n"
+            "• 1 baris = 1 kartu."
         )
 
     query.message.reply_text(text, parse_mode="Markdown")
 
 
-# ====== Handle nama (text) ======
-
 def handle_names(update: Update, context: CallbackContext):
     user = update.effective_user
-    uid = user.id
-    lang = get_lang(uid)
-
+    lang = get_lang(context)
     tpl = context.user_data.get("template")
-    if not tpl:
-        # kalau user kirim text tapi belum pilih template
-        if lang == "en":
-            update.message.reply_text("Please choose template first using /card or *Generate Card* button.")
-        else:
-            update.message.reply_text("Silakan pilih template dulu lewat /card atau tombol *Generate Card*.")
+    step = context.user_data.get("step")
+
+    # kalau bukan lagi fase input nama, cuekin aja / kasih info pendek
+    if step != "input_names" or not tpl:
         return
+
+    is_premium = user.id in PREMIUM_USERS
+    rec = get_usage_record(user.id)
+    remaining = get_remaining_quota(user.id, is_premium)
 
     raw = update.message.text.strip()
-    if not raw:
-        update.message.reply_text("❌ Input kosong, kirim lagi ya.")
-        return
-
     names = [line.strip() for line in raw.splitlines() if line.strip()]
+
     if not names:
-        update.message.reply_text("❌ Input kosong, kirim lagi ya.")
+        if lang == "en":
+            update.message.reply_text("❌ Input is empty, please send 1–10 names.")
+        else:
+            update.message.reply_text("❌ Input kosong, kirim 1–10 nama ya.")
         return
 
-    # batas 10 baris
     if len(names) > 10:
         names = names[:10]
-        update.message.reply_text("⚠ Maksimal 10 baris. Dipakai 10 baris pertama.")
-
-    premium = is_premium(uid)
-    today = get_today_str()
-    used = daily_usage.get((uid, today), 0)
-
-    # limit free
-    if not premium and used >= DAILY_FREE_LIMIT:
         if lang == "en":
-            update.message.reply_text(
-                "❌ Your free quota for today is already used.\n"
-                "Try again tomorrow or upgrade to premium → @VanzzSkyyID"
-            )
+            update.message.reply_text("⚠ Maximum 10 lines. Using the first 10 lines.")
         else:
-            update.message.reply_text(
-                "❌ Jatah gratis kamu hari ini sudah dipakai.\n"
-                "Coba lagi besok atau upgrade ke premium → @VanzzSkyyID"
-            )
-        return
+            update.message.reply_text("⚠ Maksimal 10 baris. Dipakai 10 baris pertama.")
 
-    # free user cuma 1 kartu
-    if not premium and len(names) > 1:
-        names = names[:1]
+    # cek quota free
+    if not is_premium:
+        if remaining <= 0:
+            if lang == "en":
+                update.message.reply_text(
+                    "❌ Your free quota for today is already used.\n"
+                    "Upgrade to premium → @VanzzSkyyID 😉"
+                )
+            else:
+                update.message.reply_text(
+                    "❌ Jatah free kamu hari ini sudah habis.\n"
+                    "Upgrade ke premium → @VanzzSkyyID 😉"
+                )
+            return
+
+        if len(names) > remaining:
+            names = names[:remaining]
+            if lang == "en":
+                update.message.reply_text(
+                    f"⚠ Free user can only generate {remaining} more card(s) today.\n"
+                    f"Using the first {remaining} line(s)."
+                )
+            else:
+                update.message.reply_text(
+                    f"⚠ Free user cuma bisa generate {remaining} kartu lagi hari ini.\n"
+                    f"Dipakai {remaining} baris pertama."
+                )
+
+    # info mode saat generate
+    if is_premium:
         if lang == "en":
-            update.message.reply_text(
-                "⚠ As a *Free user*, you can only generate 1 card per day.\n"
-                "Using the first name only.",
-                parse_mode="Markdown",
-            )
+            status_text = "🔓 *Premium mode active.* Generating your card(s)..."
         else:
-            update.message.reply_text(
-                "⚠ Sebagai *Free user*, kamu cuma bisa generate 1 kartu per hari.\n"
-                "Dipakai nama pertama saja.",
-                parse_mode="Markdown",
-            )
-
-    # info mode aktif
-    mode_text = "Premium user" if premium else "Free user"
-    if lang == "en":
-        update.message.reply_text(
-            f"⚙️ Generate card *{mode_text}* activated...",
-            parse_mode="Markdown",
-        )
+            status_text = "🔓 *Premium user diaktifkan.* Sedang generate kartu..."
     else:
-        update.message.reply_text(
-            f"⚙️ Generate card *{mode_text}* diaktifkan...",
-            parse_mode="Markdown",
-        )
+        if lang == "en":
+            status_text = (
+                "🆓 *Free mode active.*\n"
+                f"Daily limit: {MAX_FREE_PER_DAY} card.\n"
+                f"Remaining before this request: {remaining} card."
+            )
+        else:
+            status_text = (
+                "🆓 *Generate card free user diaktifkan.*\n"
+                f"Batas harian: {MAX_FREE_PER_DAY} kartu.\n"
+                f"Sisa sebelum request ini: {remaining} kartu."
+            )
+
+    update.message.reply_text(status_text, parse_mode="Markdown")
 
     generated = 0
 
@@ -543,9 +554,6 @@ def handle_names(update: Update, context: CallbackContext):
         upper_name = raw_name.upper()
         title_name = raw_name.title()
 
-        # nama file:
-        # UK / INDIA / INDONESIA -> pakai nama kapital
-        # BD -> title case
         if tpl in ("UK", "INDIA", "IDN"):
             safe_base = make_safe_filename(upper_name)
         else:
@@ -566,6 +574,7 @@ def handle_names(update: Update, context: CallbackContext):
                     "📍 *Alamat (di kartu) :* London, UK\n"
                     "🌐 *Domain :* lse.ac.uk\n"
                 )
+
             elif tpl == "INDIA":
                 generate_india_card(upper_name, out_path)
                 caption = f"🇮🇳 India • {upper_name}"
@@ -577,6 +586,7 @@ def handle_names(update: Update, context: CallbackContext):
                     "📆 *Validity (di kartu) :* 11/25 - 11/26\n"
                     "🌐 *Domain :* mu.ac.in\n"
                 )
+
             elif tpl == "IDN":
                 generate_indonesia_card(upper_name, out_path)
                 caption = f"🇮🇩 Indonesia • {upper_name}"
@@ -589,6 +599,7 @@ def handle_names(update: Update, context: CallbackContext):
                     "🎂 *TTL (di kartu) :* 01 Januari 2005\n"
                     "🌐 *Domain :* pnj.ac.id\n"
                 )
+
             else:  # BD
                 generate_bangladesh_card(title_name, out_path)
                 caption = f"🇧🇩 Bangladesh • {title_name}"
@@ -613,22 +624,25 @@ def handle_names(update: Update, context: CallbackContext):
             if os.path.exists(out_path):
                 os.remove(out_path)
 
-    # update limit free
-    if not premium and generated > 0:
-        daily_usage[(uid, today)] = used + 1
+    if not is_premium and generated > 0:
+        rec["count"] += generated
 
-    # selesai 1 kali use → hapus template biar nggak ke-capture terus
-    context.user_data.pop("template", None)
+    # setelah selesai, balik ke menu awal
+    context.user_data["step"] = "choose_action"
+    context.user_data["template"] = None
+    context.user_data["mode"] = None
 
+    # opsi: kirim menu lagi biar user enak
+    is_premium = user.id in PREMIUM_USERS
+    remaining = get_remaining_quota(user.id, is_premium)
+    text = build_start_text(user, lang, is_premium, remaining)
+    keyboard = build_action_keyboard(lang)
+    update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
-def cancel(update: Update, context: CallbackContext):
-    context.user_data.clear()
-    update.message.reply_text("❌ Proses dibatalkan.")
-
-
-# =========================
-# MAIN
-# =========================
 
 def main():
     if not BOT_TOKEN:
@@ -639,18 +653,13 @@ def main():
 
     # command
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("card", card_cmd))
-    dp.add_handler(CommandHandler("cancel", cancel))
+    dp.add_handler(CommandHandler("card", start))  # alias
 
-    # buttons
-    dp.add_handler(CallbackQueryHandler(gen_card_button, pattern="^GEN_CARD$"))
-    dp.add_handler(CallbackQueryHandler(gen_batch_button, pattern="^GEN_BATCH$"))
-    dp.add_handler(CallbackQueryHandler(language_menu, pattern="^LANG_MENU$"))
-    dp.add_handler(CallbackQueryHandler(set_lang_id, pattern="^SET_LANG_ID$"))
-    dp.add_handler(CallbackQueryHandler(set_lang_en, pattern="^SET_LANG_EN$"))
+    # inline buttons
+    dp.add_handler(CallbackQueryHandler(action_buttons, pattern="^(ACT_|BTN_)"))
     dp.add_handler(CallbackQueryHandler(template_chosen, pattern="^TPL_"))
 
-    # text (nama)
+    # text input (nama)
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_names))
 
     updater.start_polling()
@@ -659,5 +668,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
