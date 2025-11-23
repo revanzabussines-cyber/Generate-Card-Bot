@@ -46,7 +46,7 @@ ARIAL_REGULAR_CANDIDATES = [
     os.path.join(BASE_DIR, "arial.ttf"),
 ] + ARIAL_BOLD_CANDIDATES
 
-# INDONESIA -> pakai Arial Bold juga (biar tegas)
+# INDONESIA -> pakai Arial Bold juga
 ARIAL_ID_CANDIDATES = ARIAL_BOLD_CANDIDATES
 
 # BANGLADESH -> Verdana
@@ -89,7 +89,7 @@ INDIA_NAME_Y = 950
 INDIA_NAME_SIZE = 46
 
 # INDONESIA (center horizontal juga)
-ID_NAME_Y = 540    # kira-kira tengah area kosong di kartu kampus
+ID_NAME_Y = 540    # atur tinggi nama di kartu Indonesia
 ID_NAME_SIZE = 50
 
 # BD
@@ -119,19 +119,26 @@ def generate_uk_card(name: str, out_path: str) -> str:
     return out_path
 
 
+def _measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont):
+    """Hitung lebar/tinggi teks yang kompatibel dengan Pillow baru."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    return w, h
+
+
 def generate_india_card(name: str, out_path: str) -> str:
     """Generate kartu India. Nama: FULL KAPITAL, warna HITAM, Arial.ttf, auto center."""
     img = Image.open(TEMPLATE_IN).convert("RGB")
     draw = ImageDraw.Draw(img)
 
     font = _load_first_available(ARIAL_REGULAR_CANDIDATES, INDIA_NAME_SIZE)
-
     text = name.upper()
 
-    # hitung lebar teks biar bisa center di tengah gambar
-    text_w, text_h = draw.textsize(text, font=font)
+    # center horizontal pakai textbbox
+    text_w, text_h = _measure_text(draw, text, font)
     x = (img.width - text_w) // 2
-    y = INDIA_NAME_Y  # tinggi diatur dari konstanta di atas
+    y = INDIA_NAME_Y
 
     for ox, oy in [(0, 0), (1, 0), (0, 1), (1, 1)]:
         draw.text((x + ox, y + oy), text, font=font, fill="black")
@@ -146,11 +153,9 @@ def generate_indonesia_card(name: str, out_path: str) -> str:
     draw = ImageDraw.Draw(img)
 
     font = _load_first_available(ARIAL_ID_CANDIDATES, ID_NAME_SIZE)
-
     text = name.upper()
 
-    # center horizontal
-    text_w, text_h = draw.textsize(text, font=font)
+    text_w, text_h = _measure_text(draw, text, font)
     x = (img.width - text_w) // 2
     y = ID_NAME_Y
 
@@ -201,7 +206,7 @@ def start(update: Update, context: CallbackContext):
         ],
         [
             InlineKeyboardButton("🇮🇩 Indonesia", callback_data="TPL_ID"),
-        ]
+        ],
     ]
 
     update.message.reply_text(
@@ -222,7 +227,7 @@ def card_cmd(update: Update, context: CallbackContext):
         ],
         [
             InlineKeyboardButton("🇮🇩 Indonesia", callback_data="TPL_ID"),
-        ]
+        ],
     ]
     update.message.reply_text(
         "Pilih template kartu yang mau dibuat:",
@@ -293,7 +298,6 @@ def handle_names(update: Update, context: CallbackContext):
         else:
             safe_base = make_safe_filename(title_name)
 
-        # tanpa nomor di belakang: <NAMA>.png
         out_path = f"{safe_base}.png"
 
         try:
