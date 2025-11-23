@@ -29,7 +29,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 # =========================
 
 # isi sendiri user id premium, contoh: {123456789}
-PREMIUM_USERS = set(7321522905)
+PREMIUM_USERS = set()
 
 # limit free user: 1 kartu / hari (1 nama)
 DAILY_FREE_LIMIT = 1
