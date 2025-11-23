@@ -105,7 +105,7 @@ UK_NAME_POS = (250, 325)   # posisi nama
 UK_NAME_SIZE = 42
 
 # INDIA (center horizontal, Y bisa diatur)
-INDIA_NAME_Y = 950
+INDIA_NAME_Y = 1000
 INDIA_NAME_SIZE = 46
 
 # INDONESIA (center horizontal juga)
@@ -668,3 +668,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
