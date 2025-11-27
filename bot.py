@@ -118,7 +118,7 @@ ID_NAME_X_OFFSET = 200     # geser kanan (+), kiri (-) kalau mau
 ID_NAME_SIZE = 50
 
 # BD
-BD_HEADER_POS = (225, 425)
+BD_HEADER_POS = (175, 427)
 BD_HEADER_SIZE = 28
 
 
@@ -724,6 +724,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
